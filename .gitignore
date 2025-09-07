@@ -1,0 +1,52 @@
+# ----------------------
+# CMake / Build 系统
+# ----------------------
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+*.ninja
+*.ninja_deps
+*.ninja_log
+
+# ----------------------
+# Python
+# ----------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+*.whl
+
+# 虚拟环境
+.venv/
+env/
+venv/
+
+# ----------------------
+# macOS 系统文件
+# ----------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ----------------------
+# VSCode 配置 / 杂项
+# ----------------------
+.vscode/
+*.code-workspace
+
+# ----------------------
+# 临时 / 调试
+# ----------------------
+*.log
+*.out
+*.tmp
+*.bak
+*.swp
+*~

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["scikit-build-core>=0.8", "pybind11", "numpy"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "hpdexc"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[tool.scikit-build]
+wheel.packages = ["src/python"]
+cmake.generate-args = ["-G", "Ninja"]
+cmake.build-type = "Release"
