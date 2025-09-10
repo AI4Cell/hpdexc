@@ -10,6 +10,21 @@ compile_commands.json
 *.ninja
 *.ninja_deps
 *.ninja_log
+*.so
+*.dll
+*.dylib
+*.a
+*.lib
+*.exp
+*.def
+*.manifest
+*.res
+*.obj
+*.o
+*.obj
+*.o
+*.obj
+*.o
 
 # ----------------------
 # Python

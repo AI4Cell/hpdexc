@@ -11,7 +11,7 @@ def test_scipy(A, group_id):
                          use_continuity=True,
                          method='asymptotic', axis=0)
 
-def test_hpdex(A, group_id, sp_val):
+def test_hpdex(A, group_id, sp_val, threads=1):
     A = sp.sparse.csc_matrix(A)
     result = mwu_hpdex(A, group_id=group_id,
         n_targets=1,            # !!! 核心：G-1
@@ -27,7 +27,7 @@ def test_hpdex(A, group_id, sp_val):
         use_histogram=False,
         max_bins=65536,
         mem_budget_bytes=1 << 30,
-        threads=1,
+        threads=threads,
         progress=None,
     )
     return result.U, result.P
@@ -56,15 +56,18 @@ def dense_to_csc(dense, sp_val):
 
 def make_sparse_data(shape, minmax, spz, sp_val):
     data = np.random.rand(*shape)
-    mask = np.random.randn() < spz
+    # 修正：元素级稀疏掩码
+    mask = (np.random.rand(*shape) < spz)
     data[mask] = sp_val if sp_val is not None else np.nan
-    group_id = np.concatenate((np.ones(shape[0] // 2, dtype=np.int32), np.zeros(shape[0] // 2, dtype=np.int32)))
-    
+    group_id = np.concatenate((
+        np.ones(shape[0] // 2, dtype=np.int32),
+        np.zeros(shape[0] // 2, dtype=np.int32)
+    ))
     sparse_data = dense_to_csc(data, sp_val)
     return data, sparse_data, group_id
 
-def test(shape, minmax, spz, sp_val, repeats):
-    print(f"testing {shape} with {minmax} {spz} {sp_val} {repeats} times")
+def test(shape, minmax, spz, sp_val, repeats, threads=1):
+    print(f"testing {shape} with {minmax} {spz} {sp_val} {repeats} times, threads={threads}")
     import time
     hpdex_time = 0
     scipy_time = 0
@@ -73,7 +76,7 @@ def test(shape, minmax, spz, sp_val, repeats):
     for _ in range(repeats):
         dense_data, sparse_data, group_id = make_sparse_data(shape, minmax, spz, sp_val)
         start_hpdex = time.time()
-        hU, hP = test_hpdex(sparse_data, group_id, 0)
+        hU, hP = test_hpdex(sparse_data, group_id, 0, threads)
         end_hpdex = time.time()
         hpdex_time += end_hpdex - start_hpdex
 
@@ -86,13 +89,18 @@ def test(shape, minmax, spz, sp_val, repeats):
         max_P_diff = max(max_P_diff, np.max(np.abs(hP - P)))
         
     return hpdex_time, scipy_time, max_U_diff, max_P_diff
-        
-    
 
 
-print("\n=== 结果比较 ===")
+print("=== 单线程测试 ===")
+ht, st, du, dp = test((10000, 20000), (-5000, 5000), 0.8, 0, 1, threads=1)
+print("hpdex time:", ht)
+print("scipy time:", st)
+print("max U diff:", du)
+print("max P diff:", dp)
+print("speedup: ", st / ht, "x")
 
-ht, st, du, dp = test((1000, 1000), (-5000, 5000), 0.0, 0, 1)
+print("=== 多线程测试 ===")
+ht, st, du, dp = test((10000, 20000), (-5000, 5000), 0.8, 0, 1, threads=128)
 print("hpdex time:", ht)
 print("scipy time:", st)
 print("max U diff:", du)

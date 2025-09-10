@@ -113,8 +113,15 @@ endif()
 # 禁用Float16支持以避免符号链接问题
 target_compile_definitions(kernel PRIVATE HPDEXC_HAS_F16=0)
 
-# 启用OpenMP多线程支持
-target_compile_definitions(kernel PRIVATE HPDEXC_ST=0)
+# OpenMP多线程支持（可通过编译选项控制）
+option(HPDEXC_ENABLE_MULTITHREAD "Enable OpenMP multithreading support" ON)
+if(HPDEXC_ENABLE_MULTITHREAD)
+    target_compile_definitions(kernel PRIVATE HPDEXC_ST=0)
+    message(STATUS "Multithreading enabled (HPDEXC_ST=0)")
+else()
+    target_compile_definitions(kernel PRIVATE HPDEXC_ST=1)
+    message(STATUS "Multithreading disabled (HPDEXC_ST=1)")
+endif()
 
 # 安装扩展到 Python 包目录 `hpdexc/`（可选）
 install(TARGETS kernel DESTINATION ${CMAKE_SOURCE_DIR}/src/python/hpdex/backend)

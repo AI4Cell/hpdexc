@@ -14,16 +14,31 @@
 #define HPDEXC_ST 0  // 启用多线程支持
 #endif
 
+
+// 智能多线程控制：如果外部已有多线程或强制禁用，则关闭内部多线程
 #if defined(_OPENMP) && !HPDEXC_ST
   #include <omp.h>
+
+  // 检测是否在外部多线程环境中运行
+  inline bool is_external_parallel() {
+    #if defined(_OPENMP)
+        return omp_in_parallel() != 0;
+    #else
+        return false;
+    #endif
+    }
+  // 动态检测是否应该启用多线程
+  #define HPDEXC_SHOULD_USE_OMP() (!is_external_parallel())
+  
   // 若头文件未定义保护宏，这里提供后备。统一用它屏蔽/启用所有并行区。
   #ifndef HPDEXC_OMP_GUARD
-  #define HPDEXC_OMP_GUARD(x) (x)
+  #define HPDEXC_OMP_GUARD(x) (HPDEXC_SHOULD_USE_OMP() ? (x) : (0))
   #endif
 #else
   inline int  omp_get_max_threads() { return 1; }
   inline int  omp_get_thread_num()  { return 0; }
   inline int  omp_in_parallel()     { return 0; }
+  #define HPDEXC_SHOULD_USE_OMP() (false)
   #ifndef HPDEXC_OMP_GUARD
   #define HPDEXC_OMP_GUARD(x) (0)
   #endif

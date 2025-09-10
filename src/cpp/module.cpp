@@ -245,7 +245,7 @@ PYBIND11_MODULE(kernel, m) {
 
             throw std::runtime_error("unsupported dtype for sparse matrix data");
         },
-        py::arg("sparse_matrix"),
+        py::arg("csc_matrix"),
         py::arg("group_id"),
         py::arg("n_targets"),
         py::arg("tie_correction") = true,

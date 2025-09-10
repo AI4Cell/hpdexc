@@ -601,7 +601,7 @@ mannwhitney(
     const size_t total_cap = off[G];
     // off[G] 表示col中，每一组占据段的offset
 
-    #pragma omp parallel num_threads(threads) if(threads > 1)
+    #pragma omp parallel num_threads(threads) if HPDEXC_OMP_GUARD(threads > 1)
     {
         // === 线程私有缓冲 ===
         size_t      gnnz_buf[MannWhitneyMaxStackGroups];
@@ -636,7 +636,9 @@ mannwhitney(
 
         // 单独的 U 缓冲区，避免与 R1 aliasing
         long double U_buf[MannWhitneyMaxStackGroups];
+        long double U1_buf[MannWhitneyMaxStackGroups];
         long double* U = (G <= MannWhitneyMaxStackGroups) ? U_buf : new long double[G];
+        long double* U1 = (G <= MannWhitneyMaxStackGroups) ? U1_buf : new long double[G];
 
         // 大缓冲（分段存每组取出的值）- 按实际需要分配
         T col_val_buf[MannWhitneyMaxStackColCap];
@@ -953,20 +955,20 @@ mannwhitney(
         double f = 1.0;
         if (opt.alternative == MannWhitneyOption<T>::Alternative::less) {
             for (size_t g = 1; g < G; ++g) {
-                const long double U1 = R1[g] - base;
-                const long double U2 = (long double)n1_eff * (long double)n2_eff[g] - U1;
+                U1[g] = R1[g] - base;
+                const long double U2 = (long double)n1_eff * (long double)n2_eff[g] - U1[g];
                 U[g] = U2;
             }
         } else if (opt.alternative == MannWhitneyOption<T>::Alternative::greater) {
             for (size_t g = 1; g < G; ++g) {
-                const long double U1 = R1[g] - base;
-                U[g] = U1;
+                U1[g] = R1[g] - base;
+                U[g] = U1[g];
             }
         } else {
             for (size_t g = 1; g < G; ++g) {
-                const long double U1 = R1[g] - base;
-                const long double U2 = (long double)n1_eff * (long double)n2_eff[g] - U1;
-                U[g] = std::max(U1, U2);
+                U1[g] = R1[g] - base;
+                const long double U2 = (long double)n1_eff * (long double)n2_eff[g] - U1[g];
+                U[g] = std::max(U1[g], U2);
             }
             f = 2.0; // 与 scipy 对齐
         }
@@ -974,7 +976,7 @@ mannwhitney(
         // 5) 计算 P
         if (opt.method == MannWhitneyOption<T>::Method::exact) {
             for (size_t g = 1; g < G; ++g) {
-                result.U_buf[c * n_targets + (g-1)] = U[g];
+                result.U_buf[c * n_targets + (g-1)] = U1[g];
                 double P = mwu_p_exact_no_tie<T>(U[g], n1_eff, n2_eff[g]);
                 P *= f;
                 P = std::clamp(P, 0.0, 1.0);
@@ -982,7 +984,7 @@ mannwhitney(
             }
         } else if (opt.method == MannWhitneyOption<T>::Method::asymptotic) {
             for (size_t g = 1; g < G; ++g) {
-                result.U_buf[c * n_targets + (g-1)] = U[g];
+                result.U_buf[c * n_targets + (g-1)] = U1[g];
                 double P = mwu_p_asymptotic<T>(U[g], n1_eff, n2_eff[g], tie_sum[g], opt.use_continuity);
                 P *= f;
                 P = std::clamp(P, 0.0, 1.0);
@@ -991,7 +993,7 @@ mannwhitney(
 
         } else { // autometic
             for (size_t g = 1; g < G; ++g) {
-                result.U_buf[c * n_targets + (g-1)] = U[g];
+                result.U_buf[c * n_targets + (g-1)] = U1[g];
                 const bool asym = mannwhitney_choose_method<T>(n1_eff, n2_eff[g], has_tie[g]) == MannWhitneyOption<T>::Method::asymptotic;
                 double P = asym ?
                     mwu_p_asymptotic<T>(U[g], n1_eff, n2_eff[g], tie_sum[g], opt.use_continuity) :
@@ -1016,7 +1018,7 @@ mannwhitney(
         if HPDEXC_UNLIKELY(G > MannWhitneyMaxStackGroups) {
             delete[] gnnz; delete[] R1; delete[] tar_ptrs; delete[] tie_sum; delete[] has_tie;
             delete[] tie_cnt; delete[] grank; delete[] tar_eq; delete[] tar_ptrs_local; delete[] invalid_value_cnt; delete[] sparse_value_cnt;
-            delete[] n2_eff; delete[] U;
+            delete[] n2_eff; delete[] U; delete[] U1;
         }
     }
 
