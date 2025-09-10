@@ -15,6 +15,7 @@ compile_commands.json
 # Python
 # ----------------------
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.pyd
@@ -27,6 +28,7 @@ dist/
 .venv/
 env/
 venv/
+uv.lock
 
 # ----------------------
 # macOS 系统文件

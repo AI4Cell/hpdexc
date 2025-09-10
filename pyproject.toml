@@ -4,10 +4,19 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "hpdexc"
-version = "0.1.0"
-requires-python = ">=3.10"
+version = "1.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "build>=1.3.0",
+    "matplotlib>=3.10.6",
+    "numpy>=2.3.2",
+    "psutil>=7.0.0",
+    "pytest>=8.4.2",
+    "scipy>=1.16.1",
+    "tqdm>=4.67.1",
+]
 
 [tool.scikit-build]
-wheel.packages = ["src/python"]
-cmake.generate-args = ["-G", "Ninja"]
+wheel.packages = ["src/python/hpdex"]
 cmake.build-type = "Release"
+cmake.args = ["-DPython3_EXECUTABLE=.venv/bin/python"]
