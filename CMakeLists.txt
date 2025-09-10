@@ -46,6 +46,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(highway)
 
+# ========= Progress Bar Library =========
+# 添加 indicators 进度条库
+FetchContent_Declare(
+  indicators
+  GIT_REPOSITORY https://github.com/p-ranav/indicators.git
+  GIT_TAG v2.3
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(indicators)
+
 
 set(HPDEXC_SOURCES
   src/cpp/mannwhitney.cpp
@@ -105,9 +115,15 @@ target_compile_definitions(kernel
       $<$<BOOL:${HPDEXC_ST}>:HPDEXC_ST=1>
 )
 
+# 禁用Float16支持以避免符号链接问题
+target_compile_definitions(kernel PRIVATE HPDEXC_HAS_F16=0)
+
 # 链接 Highway
 target_link_libraries(kernel PRIVATE hwy)
 target_link_libraries(kernel PRIVATE hwy_contrib)
+
+# 链接 indicators 进度条库
+target_link_libraries(kernel PRIVATE indicators::indicators)
 
 # macOS 上的 OpenMP 兼容处理（尽量单处设置）
 if(APPLE)

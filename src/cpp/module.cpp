@@ -137,7 +137,7 @@ PYBIND11_MODULE(kernel, m) {
 
     // ========== 绑定 Progress ==========
     py::class_<ProgressTracker>(m, "Progress")
-        .def(py::init<size_t, size_t>(), py::arg("total"), py::arg("nthreads"))
+        .def(py::init<size_t, size_t, bool>(), py::arg("total"), py::arg("nthreads"), py::arg("show_progress") = false)
         .def_property_readonly("total", &ProgressTracker::total)
         .def_property_readonly("nthreads", &ProgressTracker::nthreads)
         .def("buffer", [](ProgressTracker& self){
@@ -151,7 +151,10 @@ PYBIND11_MODULE(kernel, m) {
             size_t sum = 0;
             self.aggregate_and_notify([&](size_t s){ sum = s; });
             return sum;
-        });
+        })
+        .def("start_progress_display", &ProgressTracker::start_progress_display)
+        .def("stop_progress_display", &ProgressTracker::stop_progress_display)
+        .def("complete", &ProgressTracker::complete);
 
     // ========== 绑定 MannWhitneyResult ==========
     py::class_<hpdexc::MannWhitneyResult>(m, "MannWhitneyResult")
@@ -187,7 +190,8 @@ PYBIND11_MODULE(kernel, m) {
            uint64_t max_bins,
            uint64_t mem_budget_bytes,
            int threads,
-           py::object progress) 
+           py::object progress,
+           bool show_progress) 
         {
             // 1. CSC 视图
             hpdexc::CscView A = sparse_to_csc_view(sparse_matrix);
@@ -206,15 +210,24 @@ PYBIND11_MODULE(kernel, m) {
 
             // 4. 可选进度缓冲
             void* progress_ptr = nullptr;
+            ProgressTracker* tracker_ptr = nullptr;
+            std::unique_ptr<ProgressTracker> auto_tracker = nullptr;
+            
             if (!progress.is_none()) {
                 if (py::isinstance<ProgressTracker>(progress)) {
                     auto& tracker = progress.cast<ProgressTracker&>();
                     progress_ptr = static_cast<void*>(tracker.ptr());
+                    tracker_ptr = &tracker;
                 } else {
                     auto arr = progress.cast<py::array>();
                     auto buf = arr.request(true);
                     progress_ptr = buf.ptr;
                 }
+            } else if (show_progress) {
+                // 如果show_progress=True但没有传递progress参数，自动创建ProgressTracker
+                auto_tracker = std::make_unique<ProgressTracker>(n_targets, threads, true);
+                progress_ptr = static_cast<void*>(auto_tracker->ptr());
+                tracker_ptr = auto_tracker.get();
             }
 
             // 5. dtype 分派（根据稀疏矩阵的 data dtype）
@@ -236,7 +249,14 @@ PYBIND11_MODULE(kernel, m) {
                     opt.sparse_value = sparse_val; \
                     opt.alternative = alt; \
                     opt.method = meth; \
-                    return hpdexc::mannwhitney<T>(A, opt, group_ids, n_targets, threads, progress_ptr); \
+                    if (tracker_ptr) { \
+                        tracker_ptr->start_progress_display(); \
+                    } \
+                    auto result = hpdexc::mannwhitney<T>(A, opt, group_ids, n_targets, threads, progress_ptr); \
+                    if (tracker_ptr) { \
+                        tracker_ptr->complete(); \
+                    } \
+                    return result; \
                 }
 
             HPDEXC_DTYPE_DISPATCH(MANNWHITNEY_DO)  // 只分派 int32 / int64
@@ -261,6 +281,7 @@ PYBIND11_MODULE(kernel, m) {
         py::arg("max_bins") = (1ull<<16),
         py::arg("mem_budget_bytes") = (1ull<<30),
         py::arg("threads") = -1,
-        py::arg("progress") = py::none()
+        py::arg("progress") = py::none(),
+        py::arg("show_progress") = false
     );
 }

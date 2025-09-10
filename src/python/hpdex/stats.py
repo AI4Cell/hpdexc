@@ -1,6 +1,5 @@
 from typing import Literal, Any
 from .backend import mannwhitney
-from .backend.kernel import Alternative, Method
 import scipy as sp
 import numpy as np
 
@@ -17,25 +16,26 @@ def mannwhitneyu(
     use_sparse_value: bool =True,
     is_sparse_minmax: bool =False,
     sparse_value: Any = 0,
-    threads: int = 1
+    threads: int = 1,
+    show_progress: bool = False
 ):
     match alternative:
         case "less":
-            alternative = Alternative.less
+            alternative = 0
         case "greater":
-            alternative = Alternative.greater
+            alternative = 1
         case "two_sided":
-            alternative = Alternative.two_sided
+            alternative = 2
         case _:
             raise ValueError(f"Invalid alternative: {alternative}")
     
     match method:
         case "auto":
-            method = Method.auto
+            method = 0
         case "exact":
-            method = Method.exact
+            method = 1
         case "asymptotic":
-            method = Method.asymptotic
+            method = 2
         case _:
             raise ValueError(f"Invalid method: {method}")
         
@@ -53,7 +53,7 @@ def mannwhitneyu(
         use_sparse_value=use_sparse_value,
         is_sparse_minmax=is_sparse_minmax,
         sparse_value=sparse_value,
-        threads=threads
+        show_progress=show_progress
     )
     
     return result.U, result.P

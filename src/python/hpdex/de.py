@@ -44,6 +44,7 @@ def parallel_differential_expression(
     tie_correction: bool = True,
     use_continuity: bool = True,
     clip_value: float | int | None = 20.0,
+    show_progress: bool = False,
 ) -> pd.DataFrame:
     if groupby_key not in adata.obs.columns:
         raise ValueError(f"Groupby key {groupby_key} not found in adata.obs")
@@ -57,7 +58,7 @@ def parallel_differential_expression(
     else:
         groups = list(set(groups))
         
-    if reference is not None:
+    if reference is not None and reference in groups:
         groups.remove(reference)
 
     obs = adata.obs
@@ -82,7 +83,7 @@ def parallel_differential_expression(
                 matrix = sp.sparse.csc_matrix(matrix)
             U, P = mannwhitneyu(matrix,
                                 group_id,
-                                len(groups) - 1,
+                                len(groups),
                                 tie_correction,
                                 use_continuity,
                                 "two_sided",
@@ -92,13 +93,14 @@ def parallel_differential_expression(
                                 True,
                                 False,
                                 0, # sparse see as 0 in de analysis
-                                threads)
+                                threads,
+                                show_progress=show_progress)
             
             results = []
-            reference_mask = obs[groupby_key] == reference
+            reference_mask = (obs[groupby_key] == reference).values
             
             for group_idx, group in enumerate(groups, start=1):
-                target_mask = obs[groupby_key] == group
+                target_mask = (obs[groupby_key] == group).values
                 
                 for var_idx, var_name in enumerate(adata.var_names):
                     # calculate mean

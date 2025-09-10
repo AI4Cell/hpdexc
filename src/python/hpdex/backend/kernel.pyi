@@ -4,24 +4,14 @@ import scipy as sp
 import numpy as np
 
 
-class Alternative:
-    less = 0
-    greater = 1
-    two_sided = 2
-
-class Method:
-    auto = 0
-    exact = 1
-    asymptotic = 2
-
 def mannwhitney(
     csc_matrix: sp.sparse.csc_matrix, 
     group_id: np.array,
     n_targets: int,
     tie_correction: bool = True,
     use_continuity: bool = True,
-    alternative: Alternative = Alternative.two_sided,
-    method: Method = Method.asymptotic,
+    alternative: int = 2,
+    method: int = 2,
     ref_sorted: bool = False,
     tar_sorted: bool = False,
     use_sparse_value: bool = True,
