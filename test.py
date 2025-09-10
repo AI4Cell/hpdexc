@@ -1,8 +1,8 @@
 from hpdex import parallel_differential_expression
 import pandas as pd
-import scanpy as sc
+import anndata as ad
 
-adata = sc.read_h5ad("/Volumes/Wzq/Datasets/scperturb/ReplogleWeissman2022_rpe1.h5ad")
+adata = ad.read_h5ad("/Volumes/Wzq/Datasets/scperturb/ReplogleWeissman2022_rpe1.h5ad")
 
 df = parallel_differential_expression(
     adata,

@@ -5,13 +5,13 @@ build-backend = "scikit_build_core.build"
 [project]
 name = "hpdexc"
 version = "1.0.0"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 dependencies = [
-    "anndata>=0.12.2",
+    "anndata>=0.10.9",
     "build>=1.3.0",
-    "numpy>=2.3.3",
+    "numpy>=2.0.2",
     "pandas>=2.3.2",
-    "scipy>=1.16.1",
+    "scipy>=1.13.1",
     "tqdm>=4.67.1",
 ]
 
