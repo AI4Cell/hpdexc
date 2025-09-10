@@ -40,85 +40,70 @@ static HPDEXC_FORCE_INLINE void vqsort_or_std(T* data, size_t n) {
     }
 }
 
-// 计算 p（仅 asymptotic；与 SciPy 方向一致）
+// 计算 p（仅 asymptotic；对齐 SciPy _get_mwu_z + sf）
 template<typename T>
-static HPDEXC_FORCE_INLINE double mwu_p_asymptotic(double U1, size_t n1,
-                                      size_t n2, long double tie_sum,
-                                      bool use_continuity,
-                                      typename MannWhitneyOption<T>::Alternative alt)
-{
+static HPDEXC_FORCE_INLINE double mwu_p_asymptotic(
+    double U, 
+    size_t n1,
+    size_t n2, 
+    long double tie_sum,
+    bool use_continuity
+){
     const long double N   = (long double)n1 + (long double)n2;
     const long double mu  = (long double)n1 * (long double)n2 * 0.5L;
-    long double var = (long double)n1 * (long double)n2 * ((long double)N + 1.0L) / 12.0L;
-    if (tie_sum > 0.0L) {
-        const long double denom = N * (N - 1.0L);
-        if (denom > 0.0L) {
-            var = (long double)n1 * (long double)n2 / 12.0L * ((long double)N + 1.0L - tie_sum / denom);
-        }
+
+    // 方差，带 tie 修正
+    long double var;
+    const long double denom = N * (N - 1.0L);
+    if HPDEXC_LIKELY(denom > 0.0L) {
+        var = (long double)n1 * (long double)n2 / 12.0L *
+              ((long double)N + 1.0L - tie_sum / denom);
+    } else {
+        var = (long double)n1 * (long double)n2 *
+              ((long double)N + 1.0L) / 12.0L;
     }
-    if (var <= 0.0L) return 1.0;
+    if HPDEXC_UNLIKELY(var <= 0.0L) return 1.0;
 
     const long double sd = std::sqrt(var);
-    const double cc = use_continuity ? 0.5 : 0.0;
 
-    const long double U2 = (long double)n1 * (long double)n2 - (long double)U1;
+    // continuity correction
+    long double numerator = (long double)U - mu;
+    if (use_continuity) numerator -= 0.5L;
 
-    double p = 1.0;
-    if (alt == MannWhitneyOption<T>::greater) {
-        const double z = ( (double)((long double)U1 - mu) - cc ) / (double)sd;
-        p = sf(z);
-    } else if (alt == MannWhitneyOption<T>::less) {
-        // SciPy 用 U2 的上尾，连续性修正应当为减 0.5
-        const double z = ( (double)(U2 - mu) - cc ) / (double)sd;
-        p = sf(z);
-    } else { // two-sided
-        const long double U = std::max<long double>(U1, U2);
-        const double z = ( (double)(U - mu) - cc ) / (double)sd;
-        p = 2.0 * sf(z);
-        if (p > 1.0) p = 1.0;
-    }
-    if (p < 0.0) p = 0.0;
+    const double z = numerator / sd;
+    double p = sf(z);
+
     return p;
 }
+
 
 // ---- Exact p-value for Mann–Whitney U (no ties), SciPy-aligned ----
 // 规则：SF(k)=P(U >= k)（含等号）；利用对称性从较小一侧求和；
 // alternative: less→用U2；greater→用U1；two_sided→max(U1,U2)并×2（上限1）
+// Exact p-value for Mann–Whitney U (no ties), SciPy-aligned
 template<typename T>
 static HPDEXC_FORCE_INLINE double mwu_p_exact_no_tie(
-    double U1_ref,
+    double U,       // 已经根据 alternative 挑选好的 U
     size_t n1,
-    size_t n2,
-    typename MannWhitneyOption<T>::Alternative alternative)
-{
+    size_t n2
+){
     const size_t Umax = n1 * n2;
-    if (Umax == 0) return 1.0;
+    if HPDEXC_UNLIKELY(Umax == 0) return 1.0;
 
-    // SciPy: U.astype(int)（对正数等价于向下取整）；同时钳制到 [0, Umax]
-    const double U1_clip = std::max(0.0, std::min((double)Umax, U1_ref));
-    const size_t u1 = (size_t)U1_clip;          // U1
-    const size_t u2 = Umax - u1;                     // U2
+    // 钳制 U 到 [0, Umax]，并取整（使用 floor 确保与 SciPy 一致）
+    const double U_clip = std::max(0.0, std::min((double)Umax, U));
+    const size_t u_stat = (size_t)std::floor(U_clip);
 
-    // 选择用于 SF 的 U_stat
-    size_t u_stat = u1;
-    double mul = 1.0;
-    if (alternative == MannWhitneyOption<T>::Alternative::less) {
-        u_stat = u2;
-    } else if (alternative == MannWhitneyOption<T>::Alternative::two_sided) {
-        u_stat = (u1 > u2 ? u1 : u2);
-        mul = 2.0;
-    } // greater: 用 u1
-
-    // ---------- DP：构造 U 的计数分布 dp[u] ----------
-    // 递推：对每个 i=1..n1，ndp[u] = sum_{k=0..min(n2,u)} dp[u-k]
-    // 用滑窗 O(1) 更新，整体 O(n1 * n1 * n2)；小样本可接受
+    // ---------- DP：构造 U 的计数分布 ----------
     const size_t SZ = Umax + 1;
     unsigned long long dp_buf[MannWhitneyMaxStackNnz];
     unsigned long long* dp = (SZ <= MannWhitneyMaxStackNnz) ? dp_buf : new unsigned long long[SZ];
     unsigned long long ndp_buf[MannWhitneyMaxStackNnz];
     unsigned long long* ndp = (SZ <= MannWhitneyMaxStackNnz) ? ndp_buf : new unsigned long long[SZ];
+
     std::fill(dp, dp + SZ, 0ULL);
     dp[0] = 1ULL;
+
     for (size_t i = 1; i <= n1; ++i) {
         std::fill(ndp, ndp + SZ, 0ULL);
         unsigned long long win = 0ULL;
@@ -130,15 +115,16 @@ static HPDEXC_FORCE_INLINE double mwu_p_exact_no_tie(
         }
         std::swap(dp, ndp);
     }
+
     if (SZ > MannWhitneyMaxStackNnz) {
-        delete[] dp; delete[] ndp;
+        delete[] dp;
+        delete[] ndp;
     }
 
     long double total = 0.0L;
     for (size_t u = 0; u <= Umax; ++u) total += (long double)dp[u];
 
     // ---------- SciPy 的 SF 对称优化 ----------
-    // 设 kc = Umax - u_stat；取 small = min(u_stat, kc) 计算 CDF(small)
     const size_t kc    = Umax - u_stat;
     const size_t small = (u_stat < kc ? u_stat : kc);
 
@@ -148,18 +134,16 @@ static HPDEXC_FORCE_INLINE double mwu_p_exact_no_tie(
 
     long double sf_ge;
     if (u_stat <= kc) {
-        // 在“左半边”：SF(u_stat) = 1 - CDF(u_stat) + PMF(u_stat)
+        // 左半边：SF(u_stat) = 1 - CDF(u_stat) + PMF(u_stat)
         sf_ge = 1.0L - cdf_small/total + pmf_small/total;
     } else {
-        // 在“右半边”：SF(u_stat) = CDF(kc)
+        // 右半边：SF(u_stat) = CDF(kc)
         sf_ge = cdf_small/total;
     }
 
-    long double p = sf_ge * (long double)mul;
-    if (p > 1.0L) p = 1.0L;
-    if (p < 0.0L) p = 0.0L;
-    return (double)p;
+    return (double)sf_ge;
 }
+
 
 // 统一稀疏块：min/max 通用、无分支、使用 "+=" 叠加
 static HPDEXC_FORCE_INLINE void mwu_apply_sparse_block(
@@ -221,14 +205,14 @@ static HPDEXC_FORCE_INLINE void mwu_emit_tar_block_merge(
 // none（稀疏值既非最小也非最大）核心：已初始化缓冲，计算 R1 与 tie_sum（不含任何 fill/init）。
 // 需要调用侧：
 //   - 提供 tar_ptrs_local[g]=off[g]，grank[g]=0，tar_eq[g]=0；
-//   - sp_left[g] = sparse_cnt[g] 的工作拷贝（或直接在此处拷贝）；
+//   - sp_left[g] = sparse_value_cnt[g] 的工作拷贝（或直接在此处拷贝）；
 //   - have_run[g]=false，run_len[g]=0（run_val[g] 无需初始化）。
 template<typename T>
 static HPDEXC_FORCE_INLINE void mwu_scan_sparse_none_core(
     const T* __restrict col_val,
     const size_t* __restrict off,
     const size_t* __restrict gnnz,
-    const size_t* __restrict sparse_cnt,
+    const size_t* __restrict sparse_value_cnt,
     const size_t  G,
     const T* __restrict refv,
     const size_t nref_exp,
@@ -346,7 +330,7 @@ static HPDEXC_FORCE_INLINE void mwu_scan_sparse_none_core(
             R1[g]    += (long double)ref_tie * avg_rank;
             grank[g]  = (size_t)rrnext;
 
-            if (t > 1) {
+            if HPDEXC_UNLIKELY(t > 1) {
                 const long double tt = (long double)t;
                 tie_sum[g] += tt*tt*tt - tt;
                 has_tie[g]  = true;
@@ -409,7 +393,9 @@ static HPDEXC_FORCE_INLINE void mwu_scan_dense_core(
     long double* __restrict tie_sum,
     bool* __restrict has_tie
 ){
+
     // 内联结算 tar-only 并列块的工具
+    size_t i = 0;
     auto flush = [&](size_t g){
         if (tie_cnt[g] > 0) {
             const long double t = (long double)(tie_cnt[g] + 1);
@@ -418,7 +404,7 @@ static HPDEXC_FORCE_INLINE void mwu_scan_dense_core(
             has_tie[g] = true;
         }
     };
-    size_t i = 0;
+    
     while (i < nrefcol) {
         const T vref = (T)refv[i];
         // 1) 推进所有 < vref 的 tar，并结算 tar-only tie
@@ -457,7 +443,7 @@ static HPDEXC_FORCE_INLINE void mwu_scan_dense_core(
             const long double avg_rank = (rrcur + rrnext + 1.0L) * 0.5L;
             R1[g]    += (long double)ref_tie * avg_rank;
             grank[g]  = (size_t)rrnext;
-            if (t > 1) {
+            if HPDEXC_UNLIKELY(t > 1) {
                 const long double tt = (long double)t;
                 tie_sum[g] += tt*tt*tt - tt;
                 has_tie[g] = true;
@@ -639,15 +625,18 @@ mannwhitney(
         size_t      tar_ptrs_local_buf[MannWhitneyMaxStackGroups];
         size_t*     tar_ptrs_local = (G <= MannWhitneyMaxStackGroups) ? tar_ptrs_local_buf : new size_t[G];
 
-        // 工作缓冲：先用于 invalid 计数，后复用为 sparse_cnt
-        size_t      invalid_value_cnt_sparse_cnt_buf[MannWhitneyMaxStackGroups];
-        size_t*     invalid_value_cnt = (G <= MannWhitneyMaxStackGroups) ? invalid_value_cnt_sparse_cnt_buf : new size_t[G];
+        size_t      invalid_value_cnt_buf[MannWhitneyMaxStackGroups];
+        size_t      sparse_value_cnt_buf[MannWhitneyMaxStackGroups];
+        size_t*     invalid_value_cnt = (G <= MannWhitneyMaxStackGroups) ? invalid_value_cnt_buf : new size_t[G];
+        size_t*     sparse_value_cnt = (G <= MannWhitneyMaxStackGroups) ? sparse_value_cnt_buf : new size_t[G];
 
         // n2_eff 缓冲区：移到线程级别，避免循环内分配
         size_t      n2_eff_buf[MannWhitneyMaxStackGroups];
         size_t*     n2_eff = (G <= MannWhitneyMaxStackGroups) ? n2_eff_buf : new size_t[G];
 
-        long double* U1 = R1; // 复用
+        // 单独的 U 缓冲区，避免与 R1 aliasing
+        long double U_buf[MannWhitneyMaxStackGroups];
+        long double* U = (G <= MannWhitneyMaxStackGroups) ? U_buf : new long double[G];
 
         // 大缓冲（分段存每组取出的值）- 按实际需要分配
         T col_val_buf[MannWhitneyMaxStackColCap];
@@ -678,13 +667,13 @@ mannwhitney(
         std::fill(invalid_value_cnt, invalid_value_cnt + G, 0);
         for (int64_t p = p0; p < p1; ++p) {
             const int64_t r64 = A.row_at(p);
-            if (r64 < 0 || (size_t)r64 >= R) continue; // 保护：跳过非法行索引
+            if HPDEXC_UNLIKELY(r64 < 0 || (size_t)r64 >= R) continue; // 保护：跳过非法行索引
             const size_t r = (size_t)r64;
             const int32_t g = static_cast<const int32_t*>(group_id.data)[r * group_id.stride];
-            if (g < 0 || (size_t)g >= G) continue; // 忽略无效组
+            if HPDEXC_UNLIKELY(g < 0 || (size_t)g >= G) continue; // 忽略无效组
 
             const T v = (T)data[p];
-            if (!is_valid_value(v)) { ++invalid_value_cnt[(size_t)g]; continue; }
+            if HPDEXC_UNLIKELY(!is_valid_value(v)) { ++invalid_value_cnt[(size_t)g]; continue; }
 
             const size_t gi  = (size_t)g;
             const size_t idx = off[gi] + gnnz[gi]++;
@@ -692,23 +681,25 @@ mannwhitney(
         }
         
         // 2) 各组内部排序
-        if (!opt.ref_sorted && gnnz[0] > 1) {
+        const size_t ref_valid_value = opt.use_sparse_value ? R - invalid_value_cnt[0] : gnnz[0];
+        if HPDEXC_UNLIKELY(ref_valid_value < 2) {
+            throw std::runtime_error("Sample is too small for reference group at column " + std::to_string(c));
+        }
+        if HPDEXC_LIKELY(!opt.ref_sorted && gnnz[0] > 1) {
             vqsort_or_std(&col_val[off[0]], gnnz[0]);
         }
         for (size_t g=1; g<G; ++g) {
-            if (!opt.tar_sorted && gnnz[g] > 1) {
+            const size_t valid_value = opt.use_sparse_value ? R - invalid_value_cnt[g] : gnnz[g];
+            if HPDEXC_UNLIKELY(valid_value < 2) {
+                throw std::runtime_error("Sample is too small for group " + std::to_string(g) + " at column " + std::to_string(c));
+            }
+            if HPDEXC_LIKELY(!opt.tar_sorted && gnnz[g] > 1) {
                 vqsort_or_std(&col_val[off[g]], gnnz[g]);
             }
         }
 
         // 3) 合并扫描：计算 R1[g], tie_sum[g]
         std::fill(has_tie, has_tie + G, false);
-
-        // 使用lambda表达式节藕，将tie计算分离
-        auto scan_sorted = [&](const T* refv, const size_t nrefcol) {
-
-        };
-        
 
         // 非稀疏：分 tie 修正与否。
         if (!opt.use_sparse_value) {
@@ -771,17 +762,15 @@ mannwhitney(
             const size_t nrefcol = gnnz[0];
 
             // 稀疏元素数量（零视为最小，在序列最前端形成一个合并块）
-            // 复用 invalid_value_cnt 作为 sparse_cnt
-            size_t* sparse_cnt = invalid_value_cnt;
             for (size_t g = 0; g < G; ++g) {
                 const size_t bad = invalid_value_cnt[g];
-                sparse_cnt[g] = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
+                sparse_value_cnt[g] = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
             }
 
             // 预先合并零块的影响
             for (size_t g = 1; g < G; ++g) {
-                const size_t ref_sp_cnt = sparse_cnt[0];
-                const size_t tar_sp_cnt = sparse_cnt[g];
+                const size_t ref_sp_cnt = sparse_value_cnt[0];
+                const size_t tar_sp_cnt = sparse_value_cnt[g];
                 const size_t sp_tie = ref_sp_cnt + tar_sp_cnt;
                 if (sp_tie > 1) {
                     const long double tt = (long double)sp_tie;
@@ -816,7 +805,6 @@ mannwhitney(
                 has_tie
             );
 
-            // sparse_cnt 与 invalid_value_cnt 复用，同一指针，统一在尾部释放
         }
         // 稀疏最大：稀疏块在序列末端
         else if (opt.use_sparse_value && 
@@ -829,11 +817,9 @@ mannwhitney(
             const size_t nrefcol = gnnz[0];
 
             // 稀疏元素数量（零视为最大，在序列末端形成一个合并块）
-            // 复用 invalid_value_cnt 作为 sparse_cnt
-            size_t* sparse_cnt = invalid_value_cnt;
             for (size_t g = 0; g < G; ++g) {
                 const size_t bad = invalid_value_cnt[g];
-                sparse_cnt[g] = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
+                sparse_value_cnt[g] = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
             }
 
             // 先只扫描非稀疏段
@@ -860,8 +846,8 @@ mannwhitney(
 
             // 扫尾：统一处理末端的稀疏块
             for (size_t g = 1; g < G; ++g) {
-                const size_t ref_sp_cnt = sparse_cnt[0];
-                const size_t tar_sp_cnt = sparse_cnt[g];
+                const size_t ref_sp_cnt = sparse_value_cnt[0];
+                const size_t tar_sp_cnt = sparse_value_cnt[g];
                 const size_t sp_tie     = ref_sp_cnt + tar_sp_cnt;
                 if (sp_tie > 1) {
                     const long double tt = (long double)sp_tie;
@@ -870,7 +856,7 @@ mannwhitney(
                 }
                 grank[g] += sp_tie;
                 if (ref_sp_cnt > 0) {
-                    const size_t N = gnnz[0] + sparse_cnt[0] + gnnz[g] + sparse_cnt[g];
+                    const size_t N = gnnz[0] + sparse_value_cnt[0] + gnnz[g] + sparse_value_cnt[g];
                     const size_t start_rank = N - sp_tie + 1;
                     const size_t end_rank   = N;
                     const long double avg_rank = (start_rank + end_rank) * 0.5L;
@@ -878,7 +864,6 @@ mannwhitney(
                 }
             }
 
-            // sparse_cnt 与 invalid_value_cnt 复用，同一指针，统一在尾部释放
         }
         // 稀疏 none：稀疏值位于中间，需与显式归并
         else if (opt.use_sparse_value && (opt.tie_correction || opt.method != MannWhitneyOption<T>::Method::exact) && opt.is_spare_minmax == MannWhitneyOption<T>::SparseValueMinmax::none) {
@@ -889,11 +874,9 @@ mannwhitney(
             const T* refv        = col_val + off[0];
             const size_t nrefcol = gnnz[0];
 
-            // 复用 invalid_value_cnt 作为 sparse_cnt
-            size_t* sparse_cnt = invalid_value_cnt;
             for (size_t g = 0; g < G; ++g) {
                 const size_t bad = invalid_value_cnt[g];
-                sparse_cnt[g] = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
+                sparse_value_cnt[g] = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
             }
 
             // 工作缓冲
@@ -907,7 +890,7 @@ mannwhitney(
             size_t* run_len = (G <= MannWhitneyMaxStackGroups) ? run_len_buf : new size_t[G];
 
             for (size_t g = 0; g < G; ++g) {
-                sp_left[g]  = sparse_cnt[g];
+                sp_left[g]  = sparse_value_cnt[g];
                 have_run[g] = false;
                 run_len[g]  = 0;
             }
@@ -920,7 +903,7 @@ mannwhitney(
                 col_val,
                 off,
                 gnnz,
-                sparse_cnt,
+                sparse_value_cnt,
                 G,
                 refv,
                 nrefcol,
@@ -937,74 +920,108 @@ mannwhitney(
                 has_tie
             );
 
-            if (G > MannWhitneyMaxStackGroups) { /* sparse_cnt 复用 invalid_value_cnt，统一释放 */ delete[] sp_left; delete[] have_run; delete[] run_val; delete[] run_len; }
+            if (G > MannWhitneyMaxStackGroups) { delete[] sp_left; delete[] have_run; delete[] run_val; delete[] run_len; }
         }
 
-            // 计算有效样本数（显式 + 稀疏 − 非法）并进行 R1->U1 转换
-            size_t n1_eff = gnnz[0];
-            if (opt.use_sparse_value) {
-                // 重新计算稀疏数，避免依赖分支内局部变量
-                for (size_t g = 0; g < G; ++g) {
-                    const size_t bad = invalid_value_cnt[g];
-                    const size_t sp = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
-                    if (g == 0) n1_eff += sp;
-                    else        n2_eff[g] = gnnz[g] + sp;
-                }
-            } else {
-                for (size_t g = 1; g < G; ++g) n2_eff[g] = gnnz[g];
+        // 计算有效样本数（显式 + 稀疏 − 非法）并进行 R1->U1 转换
+        size_t n1_eff = gnnz[0];
+        if HPDEXC_LIKELY(opt.use_sparse_value) {
+            // 重新计算稀疏数，避免依赖分支内局部变量
+            const size_t spr = (gcount[0] > gnnz[0] + invalid_value_cnt[0]) ? (gcount[0] - gnnz[0] - invalid_value_cnt[0]) : 0;
+            n1_eff += spr;
+            for (size_t g = 1; g < G; ++g) {
+                const size_t bad = invalid_value_cnt[g];
+                const size_t sp = (gcount[g] > gnnz[g] + bad) ? (gcount[g] - gnnz[g] - bad) : 0;
+                n2_eff[g] = gnnz[g] + sp;
             }
-
-            // R1 -> U1 转换：U1 = R1 - n1_eff*(n1_eff+1)/2
-            {
-                const long double base = (long double)n1_eff * ((long double)n1_eff + 1.0L) * 0.5L;
-                for (size_t g = 1; g < G; ++g) U1[g] = R1[g] - base;
-            }
-
-            // 5) 计算 P
-            if (opt.method == MannWhitneyOption<T>::Method::exact) {
-                for (size_t g = 1; g < G; ++g) {
-                    result.U_buf[c * n_targets + (g-1)] = U1[g];
-                    result.P_buf[c * n_targets + (g-1)] = mwu_p_exact_no_tie<T>(U1[g], n1_eff, n2_eff[g], opt.alternative);
-                }
-            } else if (opt.method == MannWhitneyOption<T>::Method::asymptotic) {
-                for (size_t g = 1; g < G; ++g) {
-                    result.U_buf[c * n_targets + (g-1)] = U1[g];
-                    result.P_buf[c * n_targets + (g-1)] = mwu_p_asymptotic<T>(U1[g], n1_eff, n2_eff[g], tie_sum[g], opt.use_continuity, opt.alternative);
-                }
-            } else { // autometic
-                for (size_t g = 1; g < G; ++g) {
-                    result.U_buf[c * n_targets + (g-1)] = U1[g];
-                    const bool asym = mannwhitney_choose_method<T>(n1_eff, n2_eff[g], has_tie[g]) == MannWhitneyOption<T>::Method::asymptotic;
-                    result.P_buf[c * n_targets + (g-1)] = asym ?
-                        mwu_p_asymptotic<T>(U1[g], n1_eff, n2_eff[g], tie_sum[g], opt.use_continuity, opt.alternative) :
-                        mwu_p_exact_no_tie<T>(U1[g], n1_eff, n2_eff[g], opt.alternative);
-                }
-            }
-
-
-
-
-            // 释放当前列的 col_val（如果是在堆上分配的）
-            if (col_val != col_val_buf) {
-                delete[] col_val;
-            }
-
-            // 更新进度
-            ((size_t*)progress_ptr)[omp_get_thread_num()]++;
-
+        } else {
+            for (size_t g = 1; g < G; ++g) n2_eff[g] = gnnz[g];
         }
+
+        // 检查边界情况：如果 n1_eff 或 n2_eff 为 0，直接设置 U=0, p=1.0
+        for (size_t g = 1; g < G; ++g) {
+            if HPDEXC_UNLIKELY(n1_eff == 0 || n2_eff[g] == 0) {
+                U[g] = 0.0L;
+                result.U_buf[c * n_targets + (g-1)] = 0.0;
+                result.P_buf[c * n_targets + (g-1)] = 1.0;
+                continue;
+            }
+        }
+
+        // R1 -> U1 转换（跳过已处理的边界情况）
+        const long double base = (long double)n1_eff * ((long double)n1_eff + 1.0L) * 0.5L;
+        double f = 1.0;
+        if (opt.alternative == MannWhitneyOption<T>::Alternative::less) {
+            for (size_t g = 1; g < G; ++g) {
+                const long double U1 = R1[g] - base;
+                const long double U2 = (long double)n1_eff * (long double)n2_eff[g] - U1;
+                U[g] = U2;
+            }
+        } else if (opt.alternative == MannWhitneyOption<T>::Alternative::greater) {
+            for (size_t g = 1; g < G; ++g) {
+                const long double U1 = R1[g] - base;
+                U[g] = U1;
+            }
+        } else {
+            for (size_t g = 1; g < G; ++g) {
+                const long double U1 = R1[g] - base;
+                const long double U2 = (long double)n1_eff * (long double)n2_eff[g] - U1;
+                U[g] = std::max(U1, U2);
+            }
+            f = 2.0; // 与 scipy 对齐
+        }
+        
+        // 5) 计算 P
+        if (opt.method == MannWhitneyOption<T>::Method::exact) {
+            for (size_t g = 1; g < G; ++g) {
+                result.U_buf[c * n_targets + (g-1)] = U[g];
+                double P = mwu_p_exact_no_tie<T>(U[g], n1_eff, n2_eff[g]);
+                P *= f;
+                P = std::clamp(P, 0.0, 1.0);
+                result.P_buf[c * n_targets + (g-1)] = P;
+            }
+        } else if (opt.method == MannWhitneyOption<T>::Method::asymptotic) {
+            for (size_t g = 1; g < G; ++g) {
+                result.U_buf[c * n_targets + (g-1)] = U[g];
+                double P = mwu_p_asymptotic<T>(U[g], n1_eff, n2_eff[g], tie_sum[g], opt.use_continuity);
+                P *= f;
+                P = std::clamp(P, 0.0, 1.0);
+                result.P_buf[c * n_targets + (g-1)] = P;
+            }
+
+        } else { // autometic
+            for (size_t g = 1; g < G; ++g) {
+                result.U_buf[c * n_targets + (g-1)] = U[g];
+                const bool asym = mannwhitney_choose_method<T>(n1_eff, n2_eff[g], has_tie[g]) == MannWhitneyOption<T>::Method::asymptotic;
+                double P = asym ?
+                    mwu_p_asymptotic<T>(U[g], n1_eff, n2_eff[g], tie_sum[g], opt.use_continuity) :
+                    mwu_p_exact_no_tie<T>(U[g], n1_eff, n2_eff[g]);
+                P *= f;
+                P = std::clamp(P, 0.0, 1.0);
+                result.P_buf[c * n_targets + (g-1)] = P;
+            }
+        }
+
+        // 释放当前列的 col_val（如果是在堆上分配的）
+        if HPDEXC_UNLIKELY(col_val != col_val_buf) {
+            delete[] col_val;
+        }
+
+        // 更新进度
+        ((size_t*)progress_ptr)[omp_get_thread_num()]++;
+
+        } // omp for end
 
         // === 每个线程释放一次 ===
-        if (G > MannWhitneyMaxStackGroups) {
+        if HPDEXC_UNLIKELY(G > MannWhitneyMaxStackGroups) {
             delete[] gnnz; delete[] R1; delete[] tar_ptrs; delete[] tie_sum; delete[] has_tie;
-            delete[] tie_cnt; delete[] grank; delete[] tar_eq; delete[] tar_ptrs_local; delete[] invalid_value_cnt;
-            delete[] n2_eff;
+            delete[] tie_cnt; delete[] grank; delete[] tar_eq; delete[] tar_ptrs_local; delete[] invalid_value_cnt; delete[] sparse_value_cnt;
+            delete[] n2_eff; delete[] U;
         }
     }
 
     // 8）清理缓冲
-    if (G > MannWhitneyMaxStackGroups) delete[] gcount;
-    if (G > MannWhitneyMaxStackGroups) delete[] off;
+    if HPDEXC_UNLIKELY(G > MannWhitneyMaxStackGroups) {delete[] gcount; delete[] off;}
 
     
     return result;

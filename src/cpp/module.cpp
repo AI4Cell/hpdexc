@@ -41,31 +41,34 @@ static inline T coerce_sparse_value_strict(py::object sparse_value) {
     }
 }
 
-// SciPy 稀疏矩阵到 CscView 的转换
+// SciPy 稀疏矩阵到 CscView 的转换（零拷贝方案）
 CscView sparse_to_csc_view(py::object sparse_matrix) {
     auto indptr = sparse_matrix.attr("indptr").cast<py::array>();
     auto indices = sparse_matrix.attr("indices").cast<py::array>();
     auto data = sparse_matrix.attr("data").cast<py::array>();
     auto shape = sparse_matrix.attr("shape").cast<std::pair<int64_t, int64_t>>();
     
+    // 检测索引数据类型，支持 int32 和 int64
+    bool index_is_i64 = false;
+    if (py::dtype::of<int64_t>().is(indptr.dtype()) && py::dtype::of<int64_t>().is(indices.dtype())) {
+        index_is_i64 = true;
+    } else if (py::dtype::of<int32_t>().is(indptr.dtype()) && py::dtype::of<int32_t>().is(indices.dtype())) {
+        index_is_i64 = false;
+    } else {
+        throw std::runtime_error("indptr and indices must both be int32 or int64");
+    }
+    
+    // 获取缓冲区指针（零拷贝）
     auto indptr_buf = indptr.request();
     auto indices_buf = indices.request();
     auto data_buf = data.request();
     
-    // 检测索引数据类型
-    bool index_is_i64 = false;
-    if (py::dtype::of<int64_t>().is(indptr.dtype())) {
-        index_is_i64 = true;
-    } else if (py::dtype::of<int32_t>().is(indptr.dtype())) {
-        index_is_i64 = false;
-    } else {
-        // 如果不是int32或int64，强制转换为int64
-        indptr = indptr.attr("astype")(py::dtype::of<int64_t>());
-        indices = indices.attr("astype")(py::dtype::of<int64_t>());
-        index_is_i64 = true;
-    }
+    // 创建 shared_ptr 来管理生命周期
+    auto indptr_owner = std::make_shared<py::array>(indptr);
+    auto indices_owner = std::make_shared<py::array>(indices);
+    auto data_owner = std::make_shared<py::array>(data);
     
-    return hpdexc::CscView::from_triplets(
+    return hpdexc::CscView::from_triplets_with_owners(
         indptr_buf.ptr,
         indices_buf.ptr,
         data_buf.ptr,
@@ -73,7 +76,9 @@ CscView sparse_to_csc_view(py::object sparse_matrix) {
         static_cast<std::size_t>(shape.second),  // cols
         static_cast<std::size_t>(indices_buf.size), // nnz
         index_is_i64,
-        false, false, false, false  // 简化，实际需要检查
+        indptr_owner,
+        indices_owner,
+        data_owner
     );
 }
 
@@ -187,11 +192,19 @@ PYBIND11_MODULE(kernel, m) {
             // 1. CSC 视图
             hpdexc::CscView A = sparse_to_csc_view(sparse_matrix);
 
-            // 2. group_id → DenseView
+            // 2. 获取稀疏矩阵的 data dtype
+            auto data_array = sparse_matrix.attr("data").cast<py::array>();
+            auto data_dtype = data_array.dtype();
+
+            // 3. group_id 类型检查（限制为 int32 或 int64）
+            if (!py::dtype::of<int32_t>().is(group_id.dtype()) && 
+                !py::dtype::of<int64_t>().is(group_id.dtype())) {
+                throw std::runtime_error("group_id must be int32 or int64");
+            }
             auto group_id_buf = group_id.request();
             hpdexc::DenseView group_ids(group_id_buf.ptr, group_id_buf.shape[0], 1);
 
-            // 可选进度缓冲
+            // 4. 可选进度缓冲
             void* progress_ptr = nullptr;
             if (!progress.is_none()) {
                 if (py::isinstance<ProgressTracker>(progress)) {
@@ -204,9 +217,9 @@ PYBIND11_MODULE(kernel, m) {
                 }
             }
 
-            // 3. dtype 分派
+            // 5. dtype 分派（根据稀疏矩阵的 data dtype）
             #define MANNWHITNEY_DO(T) \
-                if (py::dtype::of<T>().is(group_id.dtype())) { \
+                if (py::dtype::of<T>().is(data_dtype)) { \
                     using Opt = hpdexc::MannWhitneyOption<T>; \
                     bool sparse_value_is_none = sparse_value.is_none(); \
                     auto alt = static_cast<typename Opt::Alternative>(alternative); \
@@ -230,7 +243,7 @@ PYBIND11_MODULE(kernel, m) {
 
             #undef MANNWHITNEY_DO
 
-            throw std::runtime_error("unsupported dtype for group_id");
+            throw std::runtime_error("unsupported dtype for sparse matrix data");
         },
         py::arg("sparse_matrix"),
         py::arg("group_id"),

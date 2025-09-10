@@ -1,0 +1,8 @@
+# 简单有效的LLDB调试脚本
+# 使用方法: lldb --source debug.lldb .venv/bin/python t.py
+
+# 设置环境变量
+settings set target.env-vars PYTHONPATH=/Users/wzq/Documents/Code/Project/westlake/hpdex-c/src/python
+
+# 运行程序
+run

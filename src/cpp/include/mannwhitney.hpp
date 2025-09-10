@@ -29,9 +29,9 @@ struct MannWhitneyOption {
 
     /// @brief 备择假设类型
     enum Alternative {
-        two_sided = 0,  ///< 双尾检验（默认），检验 ref 与 tar 是否有差异
-        less      = 1,  ///< 单尾检验，假设 ref < tar
-        greater   = 2   ///< 单尾检验，假设 ref > tar
+        less      = 0,  ///< 单尾检验，假设 ref < tar
+        greater   = 1,  ///< 单尾检验，假设 ref > tar
+        two_sided = 2  ///< 双尾检验，假设 ref 与 tar 有差异
     } alternative;
 
     /// @brief 正态近似

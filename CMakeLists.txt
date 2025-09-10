@@ -90,8 +90,25 @@ if(APPLE)
   target_link_directories(kernel PRIVATE /opt/homebrew/opt/hdf5/lib)
 endif()
 
+# 设置默认构建类型为Debug（如果未指定）
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 # 编译选项
-target_compile_options(kernel PRIVATE -O3 -march=native)
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_options(kernel PRIVATE -g -O0 -DDEBUG -fno-omit-frame-pointer)
+    # 为LLDB优化调试信息
+    target_compile_options(kernel PRIVATE -gdwarf-4 -fstandalone-debug)
+    message(STATUS "Building in Debug mode for LLDB/GDB")
+elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+    target_compile_options(kernel PRIVATE -g -O2 -DNDEBUG)
+    message(STATUS "Building in RelWithDebInfo mode")
+else()
+    target_compile_options(kernel PRIVATE -O3 -march=native -DNDEBUG)
+    message(STATUS "Building in Release mode")
+endif()
 
 # 禁用Float16支持以避免符号链接问题
 target_compile_definitions(kernel PRIVATE HPDEXC_HAS_F16=0)
@@ -135,6 +152,18 @@ if(APPLE)
     target_link_libraries(kernel PRIVATE omp)
     target_compile_options(kernel PRIVATE -Xpreprocessor -fopenmp)
   endif()
+endif()
+
+# ========= 调试配置 =========
+# 为调试创建符号链接，方便LLDB找到符号
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_custom_target(debug_setup ALL
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+        ${CMAKE_SOURCE_DIR}/build/compile_commands.json
+        ${CMAKE_SOURCE_DIR}/compile_commands.json
+        COMMENT "Creating compile_commands.json symlink for debugging"
+    )
+    add_dependencies(debug_setup kernel)
 endif()
 
 # ========= 测试模块 =========
