@@ -46,29 +46,10 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(highway)
 
-# 头文件包含路径将在target_include_directories中设置
-
-# ========= Reader (HDF5) helper =========
-add_library(reader_obj OBJECT
-  src/cpp/reader.cpp
-)
-
-# 设置头文件包含路径
-target_include_directories(reader_obj PRIVATE 
-  ${CMAKE_SOURCE_DIR}/src/cpp
-  ${CMAKE_SOURCE_DIR}/src/cpp/include
-)
-
-# macOS 上链接 HDF5（借助 Homebrew 前缀）
-if(APPLE)
-  target_include_directories(reader_obj PRIVATE /opt/homebrew/opt/hdf5/include)
-  target_link_directories(reader_obj PRIVATE /opt/homebrew/opt/hdf5/lib)
-endif()
 
 set(HPDEXC_SOURCES
   src/cpp/mannwhitney.cpp
   src/cpp/module.cpp
-  src/cpp/reader.cpp
 )
 
 pybind11_add_module(kernel ${HPDEXC_SOURCES})
@@ -84,14 +65,7 @@ set_target_properties(kernel PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/src/python/hpdex/backend
 )
 
-# 链接 HDF5（如果需要）
-if(APPLE)
-  target_link_libraries(kernel PRIVATE hdf5)
-  target_link_directories(kernel PRIVATE /opt/homebrew/opt/hdf5/lib)
-endif()
-
-# 设置默认构建类型为Debug（如果未指定）
-if(NOT CMAKE_BUILD_TYPE)
+if(CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build." FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
@@ -110,9 +84,6 @@ else()
     message(STATUS "Building in Release mode")
 endif()
 
-# 禁用Float16支持以避免符号链接问题
-target_compile_definitions(kernel PRIVATE HPDEXC_HAS_F16=0)
-
 # OpenMP多线程支持（可通过编译选项控制）
 option(HPDEXC_ENABLE_MULTITHREAD "Enable OpenMP multithreading support" ON)
 if(HPDEXC_ENABLE_MULTITHREAD)
@@ -123,25 +94,15 @@ else()
     message(STATUS "Multithreading disabled (HPDEXC_ST=1)")
 endif()
 
-# 安装扩展到 Python 包目录 `hpdexc/`（可选）
+# 安装扩展到 Python 包目录 `hpdexc/`
 install(TARGETS kernel DESTINATION ${CMAKE_SOURCE_DIR}/src/python/hpdex/backend)
 
 # 条件编译选项
-option(HPDEXC_ENABLE_ASSERTS "Enable runtime asserts in C++ code" ON)
-option(HPDEXC_ENABLE_TEST_MACROS "Enable test-only macros in C++ code" OFF)
-option(HPDEXC_FORCE_NO_INPLACE "Disallow any inplace operation at runtime" OFF)
-option(HPDEXC_FORCE_ALWAYS_INPLACE "Force all operations to be inplace (fail if not possible)" OFF)
-option(HPDEXC_DEBUG_POLICY "Enable policy decision logging" OFF)
+option(HPDEXC_ST "Force disable multithreading" OFF)
 
 target_compile_definitions(kernel
   PRIVATE
-    $<$<BOOL:${HPDEXC_ENABLE_ASSERTS}>:HPDEXC_ENABLE_ASSERTS=1>
-    $<$<NOT:$<BOOL:${HPDEXC_ENABLE_ASSERTS}>>:HPDEXC_ENABLE_ASSERTS=0>
-    $<$<BOOL:${HPDEXC_ENABLE_TEST_MACROS}>:HPDEXC_ENABLE_TEST_MACROS=1>
-    $<$<NOT:$<BOOL:${HPDEXC_ENABLE_TEST_MACROS}>>:HPDEXC_ENABLE_TEST_MACROS=0>
-    $<$<BOOL:${HPDEXC_FORCE_NO_INPLACE}>:HPDEXC_FORCE_NO_INPLACE=1>
-    $<$<BOOL:${HPDEXC_FORCE_ALWAYS_INPLACE}>:HPDEXC_FORCE_ALWAYS_INPLACE=1>
-    $<$<BOOL:${HPDEXC_DEBUG_POLICY}>:HPDEXC_DEBUG_POLICY=1>
+      $<$<BOOL:${HPDEXC_ST}>:HPDEXC_ST=1>
 )
 
 # 链接 Highway
@@ -172,10 +133,3 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     )
     add_dependencies(debug_setup kernel)
 endif()
-
-# ========= 测试模块 =========
-# 如果需要测试模块，可以在这里添加
-# pybind11_add_module(_c_test src/cpp/module_test.cpp)
-# set_target_properties(_c_test PROPERTIES
-#   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/src/python/hpdex/backen
-# )

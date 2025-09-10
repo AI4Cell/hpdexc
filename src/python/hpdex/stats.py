@@ -1,5 +1,6 @@
 from typing import Literal, Any
-from .backend.kernel import Alternative, Method, mannwhitney
+from .backend import mannwhitney
+from .backend.kernel import Alternative, Method
 import scipy as sp
 import numpy as np
 
@@ -15,7 +16,8 @@ def mannwhitneyu(
     tar_sorted: bool =False,
     use_sparse_value: bool =True,
     is_sparse_minmax: bool =False,
-    sparse_value: Any = 0
+    sparse_value: Any = 0,
+    threads: int = 1
 ):
     match alternative:
         case "less":
@@ -38,13 +40,20 @@ def mannwhitneyu(
             raise ValueError(f"Invalid method: {method}")
         
     result = mannwhitney(
-        matrix,
-        group_id,
-        n_targets,
-        tie_correction,
-        use_continuity,
-        alternative,
-        method,
+        csc_matrix=matrix,
+        group_id=group_id,
+        n_targets=n_targets,
+        tie_correction=tie_correction,
+        use_continuity=use_continuity,
+        alternative=alternative,
+        method=method,
+        threads=threads,
+        ref_sorted=ref_sorted,
+        tar_sorted=tar_sorted,
+        use_sparse_value=use_sparse_value,
+        is_sparse_minmax=is_sparse_minmax,
+        sparse_value=sparse_value,
+        threads=threads
     )
     
     return result.U, result.P
