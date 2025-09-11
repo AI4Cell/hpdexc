@@ -8,6 +8,8 @@
 #include <cstring>
 #include <vector>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 #ifdef _OPENMP
 #include <omp.h>
 #endif

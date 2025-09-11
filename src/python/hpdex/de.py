@@ -34,6 +34,47 @@ def _percent_change(
     return (μ_tgt - μ_ref) / μ_ref
 
 
+def _vectorized_fold_change(
+    μ_tgt: np.ndarray,
+    μ_ref: np.ndarray,
+    clip_value: float | int | None = 20,
+) -> np.ndarray:
+    """Vectorized calculation of fold change between two arrays of means."""
+    result = np.zeros_like(μ_tgt)
+    
+    # Handle zero reference values
+    zero_ref_mask = μ_ref == 0
+    result[zero_ref_mask] = np.nan if clip_value is None else clip_value
+    
+    # Handle zero target values
+    zero_tgt_mask = μ_tgt == 0
+    result[zero_tgt_mask] = 0 if clip_value is None else 1 / clip_value
+    
+    # Calculate normal fold change for non-zero values
+    normal_mask = ~(zero_ref_mask | zero_tgt_mask)
+    result[normal_mask] = μ_tgt[normal_mask] / μ_ref[normal_mask]
+    
+    return result
+
+
+def _vectorized_percent_change(
+    μ_tgt: np.ndarray,
+    μ_ref: np.ndarray,
+) -> np.ndarray:
+    """Vectorized calculation of percent change between two arrays of means."""
+    result = np.zeros_like(μ_tgt)
+    
+    # Handle zero reference values
+    zero_ref_mask = μ_ref == 0
+    result[zero_ref_mask] = np.nan
+    
+    # Calculate normal percent change for non-zero values
+    normal_mask = ~zero_ref_mask
+    result[normal_mask] = (μ_tgt[normal_mask] - μ_ref[normal_mask]) / μ_ref[normal_mask]
+    
+    return result
+
+
 def parallel_differential_expression(
     adata: ad.AnnData,
     groups: list[str] | None = None,
@@ -96,43 +137,92 @@ def parallel_differential_expression(
                                 threads,
                                 show_progress=show_progress)
             
-            results = []
-            reference_mask = (obs[groupby_key] == reference).values
+            return pd.DataFrame(
+                {
+                    "target": groups,
+                    "reference": reference,
+                    "feature": adata.var_names,
+                    "p_value": P,
+                    "statistic": U
+                }
+            )
             
+            # 预计算所有mask，避免重复计算
+            reference_mask = (obs[groupby_key] == reference).values
+            group_masks = {}
+            for group in groups:
+                group_masks[group] = (obs[groupby_key] == group).values
+            
+            # 使用预分配数组来构建结果，避免重复的字典创建
+            n_genes = len(adata.var_names)
+            n_groups = len(groups)
+            total_results = n_groups * n_genes
+            
+            # 预分配结果数组
+            targets = np.empty(total_results, dtype=object)
+            references = np.empty(total_results, dtype=object)
+            features = np.empty(total_results, dtype=object)
+            target_means_arr = np.empty(total_results, dtype=float)
+            reference_means_arr = np.empty(total_results, dtype=float)
+            percent_changes_arr = np.empty(total_results, dtype=float)
+            fold_changes_arr = np.empty(total_results, dtype=float)
+            log2_fold_changes_arr = np.empty(total_results, dtype=float)
+            p_values_arr = np.empty(total_results, dtype=float)
+            statistics_arr = np.empty(total_results, dtype=float)
+            
+            # 预计算reference均值（只需要计算一次）
+            reference_means = np.array(matrix[reference_mask, :].mean(axis=0)).flatten()
+            
+            result_idx = 0
             for group_idx, group in enumerate(groups, start=1):
-                target_mask = (obs[groupby_key] == group).values
+                target_mask = group_masks[group]
                 
-                for var_idx, var_name in enumerate(adata.var_names):
-                    # calculate mean
-                    x_tgt = matrix[target_mask, var_idx]
-                    x_ref = matrix[reference_mask, var_idx]
-                    
-                    μ_tgt = x_tgt.mean()
-                    μ_ref = x_ref.mean()
-                    
-                    # fold change and percent change
-                    fc = _fold_change(μ_tgt, μ_ref, clip_value=clip_value)
-                    pcc = _percent_change(μ_tgt, μ_ref)
-                    
-                    # 获取对应的U和P值
-                    u_val = U[group_idx - 1, var_idx] if U.ndim > 1 else U[var_idx]
-                    p_val = P[group_idx - 1, var_idx] if P.ndim > 1 else P[var_idx]
-                    
-                    results.append({
-                        "target": group,
-                        "reference": reference,
-                        "feature": var_name,
-                        "target_mean": μ_tgt,
-                        "reference_mean": μ_ref,
-                        "percent_change": pcc,
-                        "fold_change": fc,
-                        "log2_fold_change": np.log2(fc),
-                        "p_value": p_val,
-                        "statistic": u_val
-                    })
+                # 批量计算该组所有基因的均值
+                target_means = np.array(matrix[target_mask, :].mean(axis=0)).flatten()
+                
+                # 向量化计算fold change和percent change
+                fold_changes = _vectorized_fold_change(target_means, reference_means, clip_value)
+                percent_changes = _vectorized_percent_change(target_means, reference_means)
+                
+                # 批量获取U和P值
+                if U.ndim > 1:
+                    u_vals = U[group_idx - 1, :]
+                    p_vals = P[group_idx - 1, :]
+                else:
+                    u_vals = U
+                    p_vals = P
+                
+                # 批量填充结果数组
+                end_idx = result_idx + n_genes
+                targets[result_idx:end_idx] = group
+                references[result_idx:end_idx] = reference
+                features[result_idx:end_idx] = adata.var_names
+                target_means_arr[result_idx:end_idx] = target_means
+                reference_means_arr[result_idx:end_idx] = reference_means
+                percent_changes_arr[result_idx:end_idx] = percent_changes
+                fold_changes_arr[result_idx:end_idx] = fold_changes
+                
+                # 安全计算log2 fold change
+                log2_fc = np.where(fold_changes > 0, np.log2(fold_changes), np.nan)
+                log2_fold_changes_arr[result_idx:end_idx] = log2_fc
+                p_values_arr[result_idx:end_idx] = p_vals
+                statistics_arr[result_idx:end_idx] = u_vals
+                
+                result_idx = end_idx
             
             # 转换为DataFrame
-            df = pd.DataFrame(results)
+            df = pd.DataFrame({
+                "target": targets,
+                "reference": references,
+                "feature": features,
+                "target_mean": target_means_arr,
+                "reference_mean": reference_means_arr,
+                "percent_change": percent_changes_arr,
+                "fold_change": fold_changes_arr,
+                "log2_fold_change": log2_fold_changes_arr,
+                "p_value": p_values_arr,
+                "statistic": statistics_arr
+            })
             
             # 进行FDR校正
             if not df.empty:

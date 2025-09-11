@@ -4,7 +4,7 @@ import anndata as ad
 import time
 
 print("Loading data...")
-adata = ad.read_h5ad("/Volumes/Wzq/Datasets/scperturb/ReplogleWeissman2022_rpe1.h5ad")
+adata = ad.read_h5ad("/ssdwork/zhoujingbo/Datasets/scperturb/ReplogleWeissman2022_rpe1.h5ad")
 
 print("Differential expression analysis...")
 start_time = time.time()

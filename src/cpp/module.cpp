@@ -225,9 +225,13 @@ PYBIND11_MODULE(kernel, m) {
                 }
             } else if (show_progress) {
                 // 如果show_progress=True但没有传递progress参数，自动创建ProgressTracker
-                auto_tracker = std::make_unique<ProgressTracker>(n_targets, threads, true);
-                progress_ptr = static_cast<void*>(auto_tracker->ptr());
-                tracker_ptr = auto_tracker.get();
+                // 使用全局单例确保只有一个进度条
+                static std::unique_ptr<ProgressTracker> global_tracker = nullptr;
+                if (!global_tracker) {
+                    global_tracker = std::make_unique<ProgressTracker>(n_targets, threads, true, "hpdex mwu");
+                }
+                progress_ptr = static_cast<void*>(global_tracker->ptr());
+                tracker_ptr = global_tracker.get();
             }
 
             // 5. dtype 分派（根据稀疏矩阵的 data dtype）

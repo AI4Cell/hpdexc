@@ -5,6 +5,14 @@ project(hpdexc LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 确保C++17特性可用
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # 确保GNU C++标准库特性
+    add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=1)
+    # 设置C++17特性
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+endif()
+
 # 生成 compile_commands.json (供 clangd)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -83,8 +91,14 @@ endif()
 # 编译选项
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(kernel PRIVATE -g -O0 -DDEBUG -fno-omit-frame-pointer)
-    # 为LLDB优化调试信息
-    target_compile_options(kernel PRIVATE -gdwarf-4 -fstandalone-debug)
+    # 为LLDB优化调试信息（检查编译器是否支持-fstandalone-debug）
+    target_compile_options(kernel PRIVATE -gdwarf-4)
+    # 检查GCC版本是否支持-fstandalone-debug（需要GCC 12+）
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-fstandalone-debug" COMPILER_SUPPORTS_STANDALONE_DEBUG)
+    if(COMPILER_SUPPORTS_STANDALONE_DEBUG)
+        target_compile_options(kernel PRIVATE -fstandalone-debug)
+    endif()
     message(STATUS "Building in Debug mode for LLDB/GDB")
 elseif(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
     target_compile_options(kernel PRIVATE -g -O2 -DNDEBUG)
