@@ -14,4 +14,4 @@ def __dir__() -> list[str]:
     return list(__all__)
 
 
-from .kernel import mannwhitney
+# from .kernel import mannwhitney  # 移除直接导入以避免类型重复定义

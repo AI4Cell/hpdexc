@@ -1,59 +1,37 @@
-from typing import Literal, Any
-from .backend import mannwhitney
-import scipy as sp
 import numpy as np
+from tqdm import tqdm
+from .backend import kernel  # 你的 pybind11 模块
+from scipy.sparse import csc_matrix
 
-def mannwhitneyu(
-    matrix: sp.sparse.csc_matrix,
-    group_id: np.array,
-    n_targets: int,
-    tie_correction: bool = True,
-    use_continuity: bool = True,
-    alternative: Literal["less", "greater", "two_sided"] = "two_sided",
-    method: Literal["auto", "exact", "asymptotic"] = "asymptotic",
-    ref_sorted: bool =False,
-    tar_sorted: bool =False,
-    use_sparse_value: bool =True,
-    is_sparse_minmax: bool =False,
-    sparse_value: Any = 0,
-    threads: int = 1,
-    show_progress: bool = False
-):
-    match alternative:
-        case "less":
-            alternative = 0
-        case "greater":
-            alternative = 1
-        case "two_sided":
-            alternative = 2
-        case _:
-            raise ValueError(f"Invalid alternative: {alternative}")
+def mannwhitneyu_test(sp_csc, gid, n_targets=4):
+    """
+    测试 Mann-Whitney U 统计检验
     
-    match method:
-        case "auto":
-            method = 0
-        case "exact":
-            method = 1
-        case "asymptotic":
-            method = 2
-        case _:
-            raise ValueError(f"Invalid method: {method}")
-        
-    result = mannwhitney(
-        csc_matrix=matrix,
-        group_id=group_id,
-        n_targets=n_targets,
-        tie_correction=tie_correction,
-        use_continuity=use_continuity,
-        alternative=alternative,
-        method=method,
-        threads=threads,
-        ref_sorted=ref_sorted,
-        tar_sorted=tar_sorted,
-        use_sparse_value=use_sparse_value,
-        is_sparse_minmax=is_sparse_minmax,
-        sparse_value=sparse_value,
-        show_progress=show_progress
+    Args:
+        sp_csc: scipy.sparse.csc_matrix 格式的稀疏矩阵
+        gid: group_id 数组，int32 类型
+        n_targets: 目标数量，默认4
+    """
+    cols = sp_csc.shape[1]
+    total = cols * n_targets
+
+    pbar = tqdm(total=total, desc="MWU", mininterval=0.1)
+
+    def on_progress(done, total_):
+        # 在 C++ 回调线程中执行（已持有 GIL）
+        pbar.n = min(done, total_)
+        pbar.refresh()
+
+    U, P = kernel.mannwhitneyu(
+        sp_csc, gid.astype(np.int32), n_targets,
+        tie_correction=True, use_continuity=True,
+        alternative=2, method=0,
+        ref_sorted=False, tar_sorted=False,
+        sparse_minmax=0, sparse_value=None,
+        threads=8,
+        progress="cb",                # 用内部缓冲，仅回调
+        on_progress=on_progress,
+        progress_interval_ms=100
     )
-    
-    return result.U, result.P
+    pbar.close()
+    return U, P

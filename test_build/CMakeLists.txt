@@ -1,19 +1,19 @@
 cmake_minimum_required(VERSION 3.18)
 project(hpdexc LANGUAGES CXX)
 
-# ================= 基础配置 =================
+# ========== 基础配置 ==========
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON) # 保证可用于共享库
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # 默认 Release
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the build type" FORCE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the build type" FORCE)
 endif()
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "RelWithDebInfo" "MinSizeRel")
 
-# ================= Python & pybind11 =================
+# ========== Python & pybind11 ==========
 set(Python3_FIND_STRATEGY LOCATION)
 set(Python3_FIND_IMPLEMENTATIONS CPython)
 if(NOT DEFINED Python3_EXECUTABLE)
@@ -24,10 +24,13 @@ endif()
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
 find_package(pybind11 REQUIRED)
 
-# ================= OpenMP =================
+# ========== OpenMP ==========
 find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+  message(STATUS "OpenMP found: ${OpenMP_CXX_FLAGS}")
+endif()
 
-# ================= Highway (VQSort) =================
+# ========== Highway (Google VQSort) ==========
 include(FetchContent)
 set(HWY_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(HWY_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -39,7 +42,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(highway)
 
-# ================= indicators =================
+# ========== indicators ==========
 FetchContent_Declare(
   indicators
   GIT_REPOSITORY https://github.com/p-ranav/indicators.git
@@ -48,14 +51,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(indicators)
 
-# ================= 源文件 =================
-set(HPDEXC_SOURCES
-  src/cpp/mannwhitneyu.cpp
-  src/cpp/module.cpp       # ⚠️ 确认入口就是 module.cpp
-)
+# ========== Python 扩展模块 ==========
+# 入口文件必须是 module.cpp
+pybind11_add_module(kernel src/cpp/module.cpp)
 
-# ================= Python 扩展模块 =================
-pybind11_add_module(kernel ${HPDEXC_SOURCES})
+# 其余 cpp 文件单独加进来，保证有独立的 .o
+target_sources(kernel PRIVATE
+    src/cpp/mannwhitneyu.cpp
+    src/cpp/reader.cpp
+    src/cpp/sort.cpp
+)
 
 target_include_directories(kernel PRIVATE 
   ${CMAKE_SOURCE_DIR}/src/cpp
@@ -66,7 +71,7 @@ set_target_properties(kernel PROPERTIES
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/src/python/hpdex/backend
 )
 
-# ================= VQSort static/动态模式开关 =================
+# ========== VQSort static/动态模式开关 ==========
 option(HPDEXC_VQSORT_STATIC "Use VQSort static inline mode" ON)
 if(HPDEXC_VQSORT_STATIC)
     target_compile_definitions(kernel PRIVATE VQSORT_ONLY_STATIC=1)
@@ -76,7 +81,7 @@ else()
     message(STATUS "VQSort: dynamic dispatch mode enabled (VQSORT_ONLY_STATIC=0)")
 endif()
 
-# ================= 编译模式 =================
+# ========== 编译模式 ==========
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_options(kernel PRIVATE -g -O0 -DDEBUG -fno-omit-frame-pointer -gdwarf-4)
     include(CheckCXXCompilerFlag)
@@ -93,7 +98,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     message(STATUS "Building in Release mode")
 endif()
 
-# ================= OpenMP 多线程选项 =================
+# ========== OpenMP 多线程选项 ==========
 option(HPDEXC_ENABLE_MULTITHREAD "Enable OpenMP multithreading support" ON)
 if(HPDEXC_ENABLE_MULTITHREAD)
     target_compile_definitions(kernel PRIVATE HPDEXC_ST=0)
@@ -103,7 +108,7 @@ else()
     message(STATUS "Multithreading disabled (HPDEXC_ST=1)")
 endif()
 
-# ================= 其它编译选项 =================
+# ========== 其它编译选项 ==========
 target_compile_definitions(kernel PRIVATE HPDEXC_WITH_PYBIND=1)
 target_compile_definitions(kernel PRIVATE HPDEXC_WITH_INDICATORS=1)
 target_compile_definitions(kernel PRIVATE HPDEXC_HAS_F16=0)
@@ -114,7 +119,7 @@ message(STATUS "Indicators progress bar enabled (HPDEXC_WITH_INDICATORS=1)")
 message(STATUS "Float16 disabled (HPDEXC_HAS_F16=0)")
 message(STATUS "All optimizations enabled (HPDEXC_ENABLE_ALL_OPTIMIZATIONS=1)")
 
-# ================= 链接依赖库 =================
+# ========== 链接依赖库 ==========
 target_link_libraries(kernel PRIVATE hwy hwy_contrib indicators::indicators)
 
 if(APPLE)
@@ -128,7 +133,7 @@ if(APPLE)
   endif()
 endif()
 
-# ================= Debug: compile_commands.json symlink =================
+# ========== Debug: compile_commands.json symlink ==========
 option(HPDEXC_LINK_COMPILE_COMMANDS "Symlink compile_commands.json at source root" ON)
 if(HPDEXC_LINK_COMPILE_COMMANDS)
   add_custom_target(link_compile_commands ALL
@@ -139,7 +144,7 @@ if(HPDEXC_LINK_COMPILE_COMMANDS)
   )
 endif()
 
-# ================= 调试信息 =================
+# ========== 调试信息 ==========
 message(STATUS "CMAKE_BUILD_TYPE = ${CMAKE_BUILD_TYPE}")
 get_target_property(KERNEL_DEFS kernel COMPILE_DEFINITIONS)
 message(STATUS "kernel COMPILE_DEFINITIONS = ${KERNEL_DEFS}")

@@ -3,7 +3,7 @@ import anndata as ad
 import numpy as np
 import scipy as sp
 from scipy.stats import false_discovery_control
-from .stats import mannwhitneyu
+from .stats import mannwhitneyu_test as mannwhitneyu
 
 
 def _fold_change(

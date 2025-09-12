@@ -1,23 +1,42 @@
-from hpdex import parallel_differential_expression
-import pandas as pd
-import anndata as ad
-import time
+import numpy as np
+import scipy as sp
+from scipy.stats import mannwhitneyu as scipy_mwu
+from hpdex.backend.kernel import mannwhitneyu as hpdex_mwu
 
-print("Loading data...")
-adata = ad.read_h5ad("/ssdwork/zhoujingbo/Datasets/scperturb/ReplogleWeissman2022_rpe1.h5ad")
+# 随机生成数据
+R, C = 1000, 1000   # 100 rows × 100 cols
+dense = np.random.rand(R, C)
 
-print("Differential expression analysis...")
-start_time = time.time()
-df = parallel_differential_expression(
-    adata,
-    groupby_key="gene",
-    reference="non-targeting",
-    threads=8,
-    show_progress=True
+# 分组标签 (前 50 行 = ref, 后 50 行 = tar)
+gid = np.array([0] * (R // 2) + [1] * (R // 2), dtype=np.int32)
+n_targets = 1
+
+# --- SciPy 版本 ---
+Us, Ps = scipy_mwu(
+    dense[:R // 2, :],  # ref
+    dense[R // 2:, :],  # tar
+    method="asymptotic",
+    use_continuity=True,
+    alternative="two-sided"
 )
-end_time = time.time()
-print("🎉 Differential expression analysis completed")
-print(f"Time taken: {end_time - start_time} s")
 
-print(df.head())
-df.to_csv("ReplogleWeissman2022_rpe1.csv", index=False)
+# --- hpdex 版本 ---
+A = sp.sparse.csc_matrix(dense)
+Uh, Ph = hpdex_mwu(
+    A, gid, n_targets,
+    threads=-1,
+    ref_sorted=False,
+    tar_sorted=False,
+    tie_correction=True,
+    use_continuity=True,
+    sparse_type=0,       # none
+    sparse_value=0.0,
+    alternative=2,       # two-sided
+    method=2             # asymptotic
+)
+
+# --- 对比结果 ---
+print("Max U difference:", np.abs(Us - Uh.T).max())
+print("Max P difference:", np.abs(Ps - Ph.T).max())
+
+print(np.finfo(float).eps)
